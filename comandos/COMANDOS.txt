@@ -1,0 +1,47 @@
+# ==========================================
+# Comandos de Compilación para Shikaku Solver
+# ==========================================
+
+# ------------------------------------------
+# FRONTEND (Angular) - Multiplataforma
+# ------------------------------------------
+# 1. Entrar a la carpeta del frontend
+cd frontend
+
+# 2. Instalar dependencias de Node
+npm install
+
+# 3. Construir la aplicación para producción
+npx ng build --configuration production
+
+# 4. Volver al directorio raíz
+cd ..
+
+# ------------------------------------------
+# LINUX / macOS (Terminal)
+# ------------------------------------------
+
+# 1. Compilar el Servidor Web (Requiere g++ con soporte C++17)
+g++ -std=c++17 -O3 -Iinclude -pthread -o shikaku_server shikaku_server.c++
+
+# 2. Compilar el Solucionador CLI por Consola (Opcional, requiere C++11)
+g++ -std=c++11 -O3 -o shikaku_solver shikaku_solver.c++
+
+# Ejecución:
+# ./shikaku_server
+# ./shikaku_solver ejemplos/01_5x5.txt
+
+# ------------------------------------------
+# WINDOWS (MinGW / MSYS2 desde CMD/PowerShell)
+# ------------------------------------------
+
+# 1. Compilar el Servidor Web
+# (Añadimos -lws2_32 y -lmswsock porque la librería ASIO subyacente en Windows los requiere para los WebSockets/HTTP)
+g++ -std=c++17 -O3 -Iinclude -pthread -o shikaku_server.exe shikaku_server.c++ -lws2_32 -lmswsock
+
+# 2. Compilar el Solucionador CLI por Consola
+g++ -std=c++11 -O3 -o shikaku_solver.exe shikaku_solver.c++
+
+# Ejecución:
+# .\shikaku_server.exe
+# .\shikaku_solver.exe ejemplos\01_5x5.txt

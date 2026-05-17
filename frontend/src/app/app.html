@@ -1,0 +1,183 @@
+<mat-toolbar color="primary" class="main-toolbar">
+  <mat-icon class="logo-icon">grid_view</mat-icon>
+  <span class="title">Shikaku Solver</span>
+  <span class="spacer"></span>
+  <button mat-icon-button (click)="mode.set('input')" matTooltip="Reiniciar">
+    <mat-icon>refresh</mat-icon>
+  </button>
+</mat-toolbar>
+
+<div class="main-container">
+
+  <!-- MODO ENTRADA -->
+  @if (mode() === 'input') {
+    <div class="input-layout">
+      <mat-card class="glass-card input-card">
+        <mat-card-header>
+          <mat-card-title>Configuración del Tablero</mat-card-title>
+          <mat-card-subtitle>Define las dimensiones y pistas</mat-card-subtitle>
+        </mat-card-header>
+        
+        <mat-card-content>
+          <p class="description">
+            Ingresa los números separados por espacios. Cada línea representa una fila del tablero. 
+            Usa 0 para celdas vacías.
+          </p>
+          
+          <mat-form-field appearance="outline" class="full-width custom-textarea">
+            <mat-label>Tablero (Matriz)</mat-label>
+            <textarea matInput rows="8" [value]="boardInput()" (input)="onInput($event)" placeholder="Ej: 4 0 3 ..."></textarea>
+          </mat-form-field>
+
+          <div class="actions">
+            <input type="file" #fileInput hidden (change)="onFileUpload($event)" accept=".txt">
+            <button mat-stroked-button color="accent" (click)="fileInput.click()" class="round-btn">
+              <mat-icon>upload_file</mat-icon> CARGAR TXT
+            </button>
+            
+            <button mat-raised-button color="primary" (click)="empezarJuego()" class="round-btn glow">
+              <mat-icon>play_arrow</mat-icon> JUGAR
+            </button>
+            
+            <button mat-raised-button color="warn" (click)="solveAI()" [disabled]="loading()" class="round-btn">
+              @if (loading()) {
+                <mat-spinner diameter="20"></mat-spinner>
+              } @else {
+                <div class="btn-content">
+                  <mat-icon>auto_fix_high</mat-icon>
+                  <span>SOLUCIONAR</span>
+                </div>
+              }
+            </button>
+          </div>
+        </mat-card-content>
+      </mat-card>
+
+      <mat-card class="glass-card info-card">
+        <mat-card-header>
+          <mat-card-title>Cómo Jugar</mat-card-title>
+        </mat-card-header>
+        <mat-card-content>
+          <div class="rule-item">
+            <mat-icon color="primary">check_circle</mat-icon>
+            <span>Divide la cuadrícula en rectángulos.</span>
+          </div>
+          <div class="rule-item">
+            <mat-icon color="primary">check_circle</mat-icon>
+            <span>Cada rectángulo debe contener <strong>una pista</strong>.</span>
+          </div>
+          <div class="rule-item">
+            <mat-icon color="primary">check_circle</mat-icon>
+            <span>El área debe ser igual al valor de la pista.</span>
+          </div>
+          <div class="rule-item">
+            <mat-icon color="primary">check_circle</mat-icon>
+            <span>No pueden solaparse y deben cubrir todo.</span>
+          </div>
+        </mat-card-content>
+      </mat-card>
+    </div>
+  }
+
+  <!-- MODO JUGANDO -->
+  @if (mode() === 'jugando') {
+    @let grid = celdas();
+    <div class="game-layout">
+      <mat-card class="glass-card game-card">
+        <mat-card-header>
+          <mat-card-title>Resolución Manual</mat-card-title>
+          <mat-card-subtitle>{{ mensajeJuego() }}</mat-card-subtitle>
+        </mat-card-header>
+        
+        <mat-card-content>
+          <div class="board-container">
+            <table class="board-table" (mouseleave)="onMouseUp()">
+              @for (row of grid; track $index; let r = $index) {
+                <tr>
+                  @for (cel of row; track $index; let c = $index) {
+                    <td
+                      [class]="cellBorders(grid, r, c, cel.regionId)"
+                      [style]="cellStyle(cel)"
+                      (mousedown)="onMouseDown(r, c)"
+                      (mouseenter)="onMouseEnter(r, c)"
+                      class="game-cell"
+                    >
+                      <span class="cell-number" [class.invisible]="cel.valor === 0">{{ cel.valor }}</span>
+                    </td>
+                  }
+                </tr>
+              }
+            </table>
+          </div>
+        </mat-card-content>
+
+        <mat-card-footer class="game-footer">
+          <div class="stats">
+            <div class="stat-badge">
+              <mat-icon>query_stats</mat-icon>
+              <span>{{ assignedCount(grid) }} / {{ grid.length * grid[0].length }} celdas</span>
+            </div>
+            <div class="stat-badge">
+              <mat-icon>category</mat-icon>
+              <span>{{ totalRegions(grid) }} regiones</span>
+            </div>
+          </div>
+          <button mat-button color="warn" (click)="mode.set('input')">ABANDONAR</button>
+        </mat-card-footer>
+      </mat-card>
+    </div>
+  }
+
+  <!-- MODO SOLUCIONADO -->
+  @if (mode() === 'solucionado') {
+    @let res = result()!;
+    @let orig = originalBoard();
+    <div class="result-layout">
+      <mat-card class="glass-card result-card">
+        <mat-card-header>
+          <mat-card-title>Solución Sintética</mat-card-title>
+          <mat-card-subtitle>Encontrada en {{ res.time_ms }} ms</mat-card-subtitle>
+        </mat-card-header>
+        
+        <mat-card-content>
+          <div class="board-container">
+            <table class="board-table">
+              @for (r of [].constructor(res.rows); track $index; let row = $index) {
+                <tr>
+                  @for (c of [].constructor(res.cols); track $index; let col = $index) {
+                    @let id = res.cells[row * res.cols + col];
+                    @let clue = orig[row][col];
+                    <td
+                      [class]="cellBorders(null, row, col, id, res.rows, res.cols, res.cells)"
+                      [style.background-color]="colorFor(id)"
+                      class="game-cell"
+                    >
+                      <span class="cell-number" [class.invisible]="clue === 0">{{ clue }}</span>
+                    </td>
+                  }
+                </tr>
+              }
+            </table>
+          </div>
+
+          <div class="regions-list">
+            <h3>Detalle de Regiones</h3>
+            <div class="regions-grid">
+              @for (reg of res.regions; track reg.id) {
+                <div class="region-chip">
+                  <span class="color-indicator" [style.background-color]="colorFor(reg.id)"></span>
+                  <span class="region-text">Región {{ reg.id }}: {{ reg.value }}</span>
+                </div>
+              }
+            </div>
+          </div>
+        </mat-card-content>
+
+        <mat-card-actions class="result-actions">
+          <button mat-raised-button color="primary" (click)="mode.set('input')" class="round-btn">NUEVO PUZZLE</button>
+        </mat-card-actions>
+      </mat-card>
+    </div>
+  }
+
+</div>
