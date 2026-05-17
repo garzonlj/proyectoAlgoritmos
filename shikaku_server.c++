@@ -1,19 +1,20 @@
 #include "crow.h"
 #include "solver.hpp"
+#include "generator.hpp"
 
 #include <fstream>
 #include <sstream>
 #include <string>
 #include <vector>
+#include <cstdlib>
+#include <ctime>
 
-// Actualizado a la ruta real de salida de Angular
 static std::string const FRONTEND_PATH = "frontend/dist/shikaku-frontend/browser";
 
 static crow::response serve_static(std::string const& rel_path) {
     std::string path = rel_path.empty() ? "index.html" : rel_path;
     std::string full_path = FRONTEND_PATH + "/" + path;
     
-    // Si no existe el archivo, probar con index.html (para SPAs)
     std::ifstream f(full_path, std::ios::binary);
     if (!f.is_open()) {
         full_path = FRONTEND_PATH + "/index.html";
@@ -41,9 +42,39 @@ static crow::response serve_static(std::string const& rel_path) {
 }
 
 int main() {
+    std::srand(std::time(nullptr));
     crow::SimpleApp app;
 
-    // API: Resolver puzzle
+    CROW_ROUTE(app, "/api/generate").methods("GET"_method)
+    ([](crow::request const& req) {
+        int size = 5; // Default size
+        if (req.url_params.get("size")) {
+            try {
+                size = std::stoi(req.url_params.get("size"));
+            } catch(...) {}
+        }
+        if (size < 3) size = 5;
+        if (size > 25) size = 25;
+
+        Tablero grid = generar_tablero(size);
+        
+        std::stringstream ss;
+        for (int r = 0; r < size; ++r) {
+            for (int c = 0; c < size; ++c) {
+                ss << static_cast<int>(grid[r][c]);
+                if (c < size - 1) ss << " ";
+            }
+            if (r < size - 1) ss << "\n";
+        }
+
+        crow::json::wvalue response;
+        response["board_str"] = ss.str();
+        
+        crow::response r_out(200, response);
+        r_out.add_header("Access-Control-Allow-Origin", "*");
+        return r_out;
+    });
+
     CROW_ROUTE(app, "/api/solve").methods("POST"_method)
     ([](crow::request const& req) {
         crow::json::rvalue body;
@@ -92,7 +123,8 @@ int main() {
         crow::json::wvalue response;
         response["rows"] = filas;
         response["cols"] = cols;
-        response["time_ms"] = static_cast<int>(res.tiempo.count());
+        // Devolvemos el tiempo en microsegundos para mayor precision en el UI
+        response["time_us"] = static_cast<long long>(std::chrono::duration_cast<std::chrono::microseconds>(res.tiempo).count());
 
         std::vector<int> cells_flat(filas * cols);
         for (int i = 0; i < filas * cols; ++i) {
@@ -116,7 +148,6 @@ int main() {
         return r_out;
     });
 
-    // Rutas estaticas para el frontend
     CROW_ROUTE(app, "/")([](){ return serve_static("index.html"); });
     CROW_ROUTE(app, "/<path>")([](std::string path){ return serve_static(path); });
 

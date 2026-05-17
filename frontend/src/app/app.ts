@@ -1,4 +1,4 @@
-import { Component, signal, HostListener } from '@angular/core';
+import { Component, signal, HostListener, OnDestroy } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { MatButtonModule } from '@angular/material/button';
@@ -9,21 +9,31 @@ import { MatToolbarModule } from '@angular/material/toolbar';
 import { MatIconModule } from '@angular/material/icon';
 import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
 import { MatSnackBar, MatSnackBarModule } from '@angular/material/snack-bar';
+import { MatTooltipModule } from '@angular/material/tooltip';
 import { ShikakuService, SolveResult } from './shikaku.service';
 
 type Mode = 'input' | 'jugando' | 'solucionado';
 
-const COLORES = [
+// Colores VARIADOS y VIBRANTES para el tablero (Shikaku estándar)
+const COLORES_TABLERO = [
   '#FF6B6B', '#4ECDC4', '#45B7D1', '#FFA07A', '#98D8C8',
   '#F7DC6F', '#BB8FCE', '#82E0AA', '#F1948A', '#85C1E9',
   '#F8C471', '#7DCEA0', '#D2B4DE', '#AED6F1', '#F5B7B1',
-  '#A9DFBF', '#F9E79F', '#EBDEF0', '#D6EAF8', '#E6B0AA'
+  '#A9DFBF', '#F9E79F', '#EBDEF0', '#D6EAF8', '#E6B0AA',
+  '#e74c3c', '#2ecc71', '#f39c12', '#3498db', '#9b59b6'
 ];
 
 interface CeldaJuego {
   valor: number;
   regionId: number | null;
   enRectActual: boolean;
+}
+
+interface LeaderboardEntry {
+  name: string;
+  size: string;
+  time: number;
+  date: string;
 }
 
 @Component({
@@ -39,14 +49,14 @@ interface CeldaJuego {
     MatToolbarModule,
     MatIconModule,
     MatProgressSpinnerModule,
-    MatSnackBarModule
+    MatSnackBarModule,
+    MatTooltipModule
   ],
   templateUrl: './app.html',
   styleUrl: './app.css',
 })
-export class App {
-  protected readonly DEFAULT_BOARD =
-    '4 0 3 0 0\n0 0 6 0 0\n2 0 0 0 0\n4 0 6 0 0\n0 0 0 0 0';
+export class App implements OnDestroy {
+  protected readonly DEFAULT_BOARD = '4 0 3 0 0\n0 0 6 0 0\n2 0 0 0 0\n4 0 6 0 0\n0 0 0 0 0';
 
   protected readonly boardInput = signal(this.DEFAULT_BOARD);
   protected readonly originalBoard = signal<number[][]>([]);
@@ -58,13 +68,29 @@ export class App {
   protected readonly dragInicio = signal<{ r: number; c: number } | null>(null);
   protected readonly dragFin = signal<{ r: number; c: number } | null>(null);
   protected readonly mensajeJuego = signal('Carga un tablero para comenzar');
+  
+  protected readonly playerName = signal(localStorage.getItem('shikaku_player') || 'Invitado');
+  protected readonly timerValue = signal(0);
+  protected readonly leaderboard = signal<LeaderboardEntry[]>([]);
+  protected readonly showCompletionDialog = signal(false);
+  protected readonly completionTime = signal(0);
+  protected readonly usedHint = signal(false);
 
   private nextRegionId = 0;
+  private timerInterval: any;
 
-  constructor(private api: ShikakuService, private snackBar: MatSnackBar) {}
+  constructor(private api: ShikakuService, private snackBar: MatSnackBar) {
+    this.loadLeaderboard();
+  }
 
-  protected onInput(e: Event) {
-    this.boardInput.set((e.target as HTMLTextAreaElement).value);
+  ngOnDestroy() { this.stopTimer(); }
+
+  protected onInput(e: Event) { this.boardInput.set((e.target as HTMLTextAreaElement).value); }
+
+  protected onNameInput(e: Event) {
+    const val = (e.target as HTMLInputElement).value;
+    this.playerName.set(val);
+    localStorage.setItem('shikaku_player', val);
   }
 
   protected onFileUpload(e: Event) {
@@ -75,53 +101,79 @@ export class App {
     reader.onload = () => {
       this.boardInput.set(reader.result as string);
       this.mode.set('input');
-      this.error.set(null);
-      this.snackBar.open('Tablero cargado con éxito', 'OK', { duration: 2000 });
     };
     reader.readAsText(file);
   }
 
+  // Generador Aleatorio de Tableros Shikaku (Usando C++)
+  protected async generarTableroAleatorio() {
+    this.loading.set(true);
+    try {
+      const size = Math.random() < 0.5 ? 5 : (Math.random() < 0.5 ? 6 : 7);
+      const res = await this.api.generate(size);
+      this.boardInput.set(res.board_str);
+      this.snackBar.open('Nuevo tablero generado', 'OK', { duration: 2000 });
+    } catch (err) {
+      this.snackBar.open('Error al generar el tablero', 'OK');
+    } finally {
+      this.loading.set(false);
+    }
+  }
+
   private parseBoard(): number[][] | null {
-    const lines = this.boardInput()
-      .split('\n')
-      .map(l => l.trim())
-      .filter(l => l.length > 0);
+    const text = this.boardInput().trim();
+    if (!text) {
+      this.snackBar.open('El tablero está vacío', 'OK', { duration: 3000 });
+      return null;
+    }
+    const lines = text.split('\n').map(l => l.trim()).filter(l => l.length > 0);
     try {
       const board = lines.map(line => line.split(/\s+/).map(Number));
-      if (board.length === 0 || board[0].length === 0)
-        throw new Error('Tablero vacío');
+      if (board.length === 0 || board[0].length === 0) throw new Error('Tablero vacío');
       const cols = board[0].length;
+      
+      let totalSum = 0;
+      let hasClues = false;
+
       for (const row of board) {
-        if (row.length !== cols)
-          throw new Error('Las filas deben tener el mismo número de columnas');
-        for (const v of row)
-          if (isNaN(v) || v < 0) throw new Error('Los valores deben ser números >= 0');
+        if (row.length !== cols) throw new Error('Las filas tienen longitudes inconsistentes');
+        for (const v of row) {
+          if (isNaN(v) || v < 0) throw new Error('Contiene caracteres no válidos o negativos');
+          if (v > 0) {
+            hasClues = true;
+            totalSum += v;
+          }
+        }
       }
+
+      if (!hasClues) throw new Error('El tablero no tiene ninguna pista');
+      
+      // Validación matemática fundamental: La suma de las pistas debe ser igual al área total
+      const totalArea = board.length * cols;
+      if (totalSum !== totalArea) {
+        throw new Error(`Invalido: El área total es ${totalArea}, pero la suma de las pistas es ${totalSum}`);
+      }
+
       return board;
     } catch (err: any) {
-      this.error.set(err.message);
-      this.snackBar.open(err.message, 'Cerrar', { duration: 3000 });
+      this.snackBar.open(err.message, 'OK', { duration: 4000 });
       return null;
     }
   }
 
   protected async solveAI() {
     const board = this.parseBoard();
-    if (!board) return;
+    if (!board) return; // Se detiene aquí si es inválido
     this.originalBoard.set(board);
     this.loading.set(true);
-    this.error.set(null);
-    this.result.set(null);
+    this.stopTimer();
     try {
       const res = await this.api.solve(board);
-      if (res.error) {
-         throw new Error(res.error);
-      }
+      if (res.error) throw new Error(res.error);
       this.result.set(res);
       this.mode.set('solucionado');
     } catch (err: any) {
-      this.error.set(err.message || 'Error al resolver');
-      this.snackBar.open(err.message || 'Error del servidor', 'Cerrar');
+      this.snackBar.open('Tablero sin solución o ' + err.message, 'OK');
     } finally {
       this.loading.set(false);
     }
@@ -129,167 +181,151 @@ export class App {
 
   protected empezarJuego() {
     const board = this.parseBoard();
-    if (!board) return;
+    if (!board) return; // Se detiene aquí si es inválido
     this.originalBoard.set(board);
     this.nextRegionId = 0;
-    const grid: CeldaJuego[][] = board.map(row => 
-      row.map(val => ({ valor: val, regionId: null, enRectActual: false }))
-    );
-    this.celdas.set(grid);
-    this.dragInicio.set(null);
-    this.dragFin.set(null);
-    this.mensajeJuego.set('Mantén presionado y arrastra para crear rectángulos.');
+    this.celdas.set(board.map(row => row.map(val => ({ valor: val, regionId: null, enRectActual: false }))));
     this.mode.set('jugando');
+    this.startTimer();
+    this.usedHint.set(false);
+    this.showCompletionDialog.set(false);
   }
 
-  // Interacción Click-and-Drag
+  private startTimer() {
+    this.stopTimer();
+    this.timerValue.set(0);
+    this.timerInterval = setInterval(() => this.timerValue.update(v => v + 1), 1000);
+  }
+
+  private stopTimer() { if (this.timerInterval) { clearInterval(this.timerInterval); this.timerInterval = null; } }
+
+  protected formatTime(seconds: number): string {
+    if (seconds == null || isNaN(seconds) || seconds < 0) return '0:00';
+    const mins = Math.floor(seconds / 60), secs = seconds % 60;
+    return `${mins}:${secs.toString().padStart(2, '0')}`;
+  }
+
+  protected formatPreciseTime(us: number): string {
+    if (us == null || isNaN(us) || us < 0) return '0 ms';
+    if (us < 1000) return `${us} μs`;
+    if (us < 1000000) return `${(us / 1000).toFixed(2)} ms`;
+    return `${(us / 1000000).toFixed(2)} s`;
+  }
+
   protected onMouseDown(r: number, c: number) {
-    if (this.celdas()[r][c].regionId !== null) return;
+    const grid = this.celdas();
+    const currentRegion = grid[r][c].regionId;
+    if (currentRegion !== null) {
+      // Deseleccionar región existente
+      const newGrid = grid.map(row => row.map(cell => 
+        cell.regionId === currentRegion ? { ...cell, regionId: null } : { ...cell }
+      ));
+      this.celdas.set(newGrid);
+      this.mensajeJuego.set('Región eliminada.');
+      return;
+    }
+    
     this.dragInicio.set({ r, c });
     this.dragFin.set({ r, c });
     this.actualizarPrevisual();
   }
 
   protected onMouseEnter(r: number, c: number) {
-    if (this.dragInicio()) {
-      this.dragFin.set({ r, c });
-      this.actualizarPrevisual();
-    }
+    if (this.dragInicio()) { this.dragFin.set({ r, c }); this.actualizarPrevisual(); }
   }
 
   @HostListener('window:mouseup')
   protected onMouseUp() {
-    const inicio = this.dragInicio();
-    const fin = this.dragFin();
-    if (!inicio || !fin) {
-      this.dragInicio.set(null);
-      this.dragFin.set(null);
-      return;
-    }
-
-    const r0 = Math.min(inicio.r, fin.r);
-    const c0 = Math.min(inicio.c, fin.c);
-    const r1 = Math.max(inicio.r, fin.r);
-    const c1 = Math.max(inicio.c, fin.c);
-
+    const inicio = this.dragInicio(), fin = this.dragFin();
+    if (!inicio || !fin) { this.dragInicio.set(null); return; }
+    const r0 = Math.min(inicio.r, fin.r), c0 = Math.min(inicio.c, fin.c);
+    const r1 = Math.max(inicio.r, fin.r), c1 = Math.max(inicio.c, fin.c);
     const grid = this.celdas().map(row => row.map(cell => ({...cell, enRectActual: false})));
-    const val = this.validarRectangulo(grid, r0, c0, r1, c1);
+    const area = (r1 - r0 + 1) * (c1 - c0 + 1);
+    const pistas: any[] = [];
+    for (let r = r0; r <= r1; r++)
+      for (let c = c0; c <= c1; c++)
+        if (grid[r][c].valor > 0) pistas.push(grid[r][c].valor);
 
-    if (val.valido) {
+    if (pistas.length === 1 && pistas[0] === area) {
       const id = this.nextRegionId++;
-      for (let rr = r0; rr <= r1; rr++)
-        for (let cc = c0; cc <= c1; cc++)
-          grid[rr][cc].regionId = id;
+      for (let rr = r0; rr <= r1; rr++) for (let cc = c0; cc <= c1; cc++) grid[rr][cc].regionId = id;
       this.celdas.set(grid);
-      this.mensajeJuego.set(`Rectángulo de área ${val.area} creado.`);
       this.verificarCompleto(grid);
-    } else {
-      this.mensajeJuego.set(`Inválido: ${val.razon}`);
-      this.celdas.set(grid);
     }
-
     this.dragInicio.set(null);
-    this.dragFin.set(null);
   }
 
   private actualizarPrevisual() {
-    const inicio = this.dragInicio();
-    const fin = this.dragFin();
-    if (!inicio || !fin) return;
-
-    const r0 = Math.min(inicio.r, fin.r);
-    const c0 = Math.min(inicio.c, fin.c);
-    const r1 = Math.max(inicio.r, fin.r);
-    const c1 = Math.max(inicio.c, fin.c);
-
-    const grid = this.celdas().map((row, r) => 
-      row.map((cell, c) => ({
-        ...cell,
-        enRectActual: (r >= r0 && r <= r1 && c >= c0 && c <= c1)
-      }))
-    );
-    this.celdas.set(grid);
-  }
-
-  private validarRectangulo(
-    grid: CeldaJuego[][], r0: number, c0: number, r1: number, c1: number
-  ): { valido: boolean; area?: number; valor?: number; razon?: string } {
-    const alto = r1 - r0 + 1, ancho = c1 - c0 + 1, area = alto * ancho;
-    
-    // Buscar pistas dentro del rectángulo
-    const pistas: {r: number, c: number, v: number}[] = [];
-    for (let r = r0; r <= r1; r++) {
-      for (let c = c0; c <= c1; c++) {
-        if (grid[r][c].regionId !== null)
-          return { valido: false, razon: 'Se solapa con otra región' };
-        if (grid[r][c].valor > 0) {
-          pistas.push({r, c, v: grid[r][c].valor});
-        }
-      }
-    }
-
-    if (pistas.length === 0)
-      return { valido: false, razon: 'No contiene ninguna pista' };
-    if (pistas.length > 1)
-      return { valido: false, razon: 'Contiene más de una pista' };
-    
-    const valor = pistas[0].v;
-    if (area !== valor)
-      return { valido: false, razon: `El área (${area}) no coincide con la pista (${valor})` };
-
-    return { valido: true, area, valor };
+    const i = this.dragInicio(), f = this.dragFin();
+    if (!i || !f) return;
+    const r0 = Math.min(i.r, f.r), c0 = Math.min(i.c, f.c), r1 = Math.max(i.r, f.r), c1 = Math.max(i.c, f.c);
+    this.celdas.set(this.celdas().map((row, r) => row.map((cell, c) => ({...cell, enRectActual: r >= r0 && r <= r1 && c >= c0 && c <= c1}))));
   }
 
   private verificarCompleto(grid: CeldaJuego[][]) {
-    const completo = grid.every(row => row.every(cel => cel.regionId !== null));
-    if (completo) {
-      this.mensajeJuego.set('¡Felicidades! Has completado el puzzle.');
-      this.snackBar.open('¡Puzzle completado!', 'Celebrar', { duration: 5000 });
+    if (grid.every(row => row.every(cel => cel.regionId !== null))) {
+      this.stopTimer();
+      this.completionTime.set(this.timerValue());
+      this.showCompletionDialog.set(true);
+      if (!this.usedHint()) this.addToLeaderboard(grid.length, grid[0].length, this.timerValue());
     }
   }
 
-  // Estilos y Visualización
-  protected colorFor(regionId: number | null): string {
-    return regionId === null ? 'transparent' : COLORES[regionId % COLORES.length];
+  protected async showSolution() {
+    this.usedHint.set(true); this.stopTimer();
+    this.loading.set(true);
+    try {
+      const res = await this.api.solve(this.originalBoard());
+      this.result.set(res);
+      this.mode.set('solucionado');
+    } catch (err) { this.snackBar.open('Error al generar la solución', 'OK'); } 
+    finally { this.loading.set(false); }
   }
 
-  protected cellBorders(
-    grid: CeldaJuego[][] | null, r: number, c: number, regionId: number | null, 
-    rows?: number, cols?: number, flatCells?: number[]
-  ): string {
-    const cls = ['cell'];
-    if (regionId === null) return cls.join(' ');
+  private loadLeaderboard() {
+    const data = localStorage.getItem('shikaku_leaderboard');
+    if (data) this.leaderboard.set(JSON.parse(data));
+  }
 
+  protected clearLeaderboard() {
+    this.leaderboard.set([]);
+    localStorage.removeItem('shikaku_leaderboard');
+    this.snackBar.open('Leaderboard limpia', 'OK');
+  }
+
+  private addToLeaderboard(rows: number, cols: number, time: number) {
+    const entry: LeaderboardEntry = { name: this.playerName(), size: `${rows}x${cols}`, time, date: new Date().toLocaleDateString() };
+    const current = [...this.leaderboard(), entry].sort((a, b) => a.time - b.time).slice(0, 10);
+    this.leaderboard.set(current);
+    localStorage.setItem('shikaku_leaderboard', JSON.stringify(current));
+  }
+
+  protected colorFor(id: number | null) { 
+    return id === null ? 'transparent' : COLORES_TABLERO[id % COLORES_TABLERO.length]; 
+  }
+
+  protected cellStyle(cel: CeldaJuego) {
+    if (cel.regionId !== null) return { 'background-color': this.colorFor(cel.regionId) };
+    if (cel.enRectActual) return { 'background-color': 'rgba(44, 44, 94, 0.15)' };
+    return {};
+  }
+
+  protected cellBorders(grid: any, r: number, c: number, id: any, rows?: any, cols?: any, flat?: any) {
+    const cls = ['cell'];
+    if (id === null) return cls.join(' ');
     if (grid) {
       const R = grid.length, C = grid[0].length;
-      if (c === 0 || grid[r][c - 1].regionId !== regionId) cls.push('bl');
-      if (r === 0 || grid[r - 1][c].regionId !== regionId) cls.push('bt');
-      if (c === C - 1 || grid[r][c + 1].regionId !== regionId) cls.push('br');
-      if (r === R - 1 || grid[r + 1][c].regionId !== regionId) cls.push('bb');
-    } else if (flatCells && rows !== undefined && cols !== undefined) {
-      if (c === 0 || flatCells[r * cols + c - 1] !== regionId) cls.push('bl');
-      if (r === 0 || flatCells[(r - 1) * cols + c] !== regionId) cls.push('bt');
-      if (c === cols - 1 || flatCells[r * cols + c + 1] !== regionId) cls.push('br');
-      if (r === rows - 1 || flatCells[(r + 1) * cols + c] !== regionId) cls.push('bb');
+      if (c === 0 || grid[r][c-1].regionId !== id) cls.push('bl');
+      if (r === 0 || grid[r-1][c].regionId !== id) cls.push('bt');
+      if (c === C-1 || grid[r][c+1].regionId !== id) cls.push('br');
+      if (r === R-1 || grid[r+1][c].regionId !== id) cls.push('bb');
+    } else if (flat && rows && cols) {
+      if (c === 0 || flat[r*cols + c-1] !== id) cls.push('bl');
+      if (r === 0 || flat[(r-1)*cols + c] !== id) cls.push('bt');
+      if (c === cols-1 || flat[r*cols + c+1] !== id) cls.push('br');
+      if (r === rows-1 || flat[(r+1)*cols + c] !== id) cls.push('bb');
     }
     return cls.join(' ');
-  }
-
-  protected cellStyle(cel: CeldaJuego): Record<string, string> {
-    const s: Record<string, string> = {};
-    if (cel.regionId !== null) {
-      s['background-color'] = this.colorFor(cel.regionId);
-      s['color'] = 'rgba(0,0,0,0.7)';
-    } else if (cel.enRectActual) {
-      s['background-color'] = 'rgba(78, 205, 196, 0.2)';
-    }
-    return s;
-  }
-
-  protected totalRegions(grid: CeldaJuego[][]): number {
-    return new Set(grid.flat().map(c => c.regionId).filter(v => v !== null)).size;
-  }
-  protected assignedCount(grid: CeldaJuego[][]): number {
-    return grid.flat().filter(c => c.regionId !== null).length;
   }
 }

@@ -11,17 +11,23 @@
 #include <unordered_map>
 #include <vector>
 
+/**
+ * ESTRUCTURAS DE DATOS PRINCIPALES
+ * Tablero: Matriz de 8 bits para ahorrar memoria.
+ * RegId: Identificador unico para cada region (rectangulo).
+ * Asignacion: Mapa que asocia cada indice de celda (r*cols + c) con un ID de region.
+ */
 using Tablero    = std::vector<std::vector<uint8_t>>;
-using RegId      = int; // Cambiado de int8_t a int para evitar desbordamiento
+using RegId      = int; 
 using Asignacion = std::unordered_map<int, RegId>;
 
 struct Rect {
-    int r0, c0, r1, c1;
-    int clue_index;
+    int r0, c0, r1, c1; // Coordenadas de la esquina superior izquierda y inferior derecha
+    int clue_index;     // Indice de la pista a la que pertenece este rectangulo
 };
 
 struct Clue {
-    int r, c, value;
+    int r, c, value;    // Posicion (r, c) y valor del area requerida
 };
 
 struct RegionInfo {
@@ -34,9 +40,13 @@ struct RegionInfo {
 struct Resultado {
     Asignacion                 asignacion;
     std::vector<RegionInfo>    regiones;
-    std::chrono::milliseconds  tiempo;
+    std::chrono::nanoseconds   tiempo; 
 };
 
+/**
+ * leer_tablero: Carga el puzzle desde un archivo de texto.
+ * Soporta espacios, tabulaciones y saltos de linea.
+ */
 inline bool leer_tablero(std::string const& ruta, Tablero& out) {
     std::ifstream f(ruta);
     if (!f.is_open()) return false;
@@ -57,25 +67,43 @@ inline bool leer_tablero(std::string const& ruta, Tablero& out) {
     return true;
 }
 
+/**
+ * validar_tablero: Verifica que el tablero sea rectangular y tenga al menos una pista.
+ */
 inline std::vector<std::string> validar_tablero(Tablero const& t) {
     std::vector<std::string> errs;
     if (t.empty()) { errs.emplace_back("Tablero vacio."); return errs; }
     int cols = static_cast<int>(t[0].size());
     for (int i = 0; i < static_cast<int>(t.size()); ++i) {
         if (static_cast<int>(t[i].size()) != cols)
-            errs.emplace_back("Fila " + std::to_string(i) + " tiene " + std::to_string(t[i].size()) + " columnas, se esperan " + std::to_string(cols));
+            errs.emplace_back("Fila " + std::to_string(i) + " inconsistente.");
         for (int j = 0; j < cols; ++j)
             if (t[i][j] < 0)
-                errs.emplace_back("Valor invalido en (" + std::to_string(i) + "," + std::to_string(j) + "): " + std::to_string(t[i][j]) + " (debe ser >= 0)");
+                errs.emplace_back("Valor negativo en (" + std::to_string(i) + "," + std::to_string(j) + ")");
     }
     bool has_clue = false;
     for (auto const& row : t)
         for (auto v : row)
             if (v > 0) { has_clue = true; break; }
-    if (!has_clue) errs.emplace_back("El tablero no tiene pistas (valores > 0).");
+    if (!has_clue) errs.emplace_back("Sin pistas.");
     return errs;
 }
 
+/**
+ * resolver: Implementa el algoritmo de busqueda con Backtracking y heuristica MRV.
+ * 
+ * 1. PRE-CALCULO (Candidatos): Para cada pista, generamos todos los rectangulos posibles
+ *    que tengan el area exacta y contengan la pista, asegurandonos de que no cubran
+ *    otras pistas.
+ * 
+ * 2. HEURISTICA MRV (Minimum Remaining Values): Ordenamos las pistas por la cantidad 
+ *    de rectangulos candidatos. Empezar por la pista "mas restringida" reduce
+ *    drasticamente el espacio de busqueda.
+ * 
+ * 3. BACKTRACKING: Intentamos colocar un rectangulo para la pista actual, marcamos
+ *    las celdas como ocupadas y pasamos a la siguiente pista. Si no hay solucion,
+ *    deshacemos los cambios (backtrack) e intentamos el siguiente candidato.
+ */
 inline bool resolver(Tablero const& tablero, Resultado& out) {
     auto t0 = std::chrono::steady_clock::now();
     
@@ -84,6 +112,7 @@ inline bool resolver(Tablero const& tablero, Resultado& out) {
     int cols = static_cast<int>(tablero[0].size());
     int total = filas * cols;
     
+    // Identificar todas las pistas (>0)
     std::vector<Clue> clues;
     for (int r = 0; r < filas; r++)
         for (int c = 0; c < cols; c++)
@@ -92,26 +121,24 @@ inline bool resolver(Tablero const& tablero, Resultado& out) {
     
     if (clues.empty()) return false;
     
-    // Mapear cada celda a su pista si existe
+    // Mapa rapido para saber que celda tiene que pista
     std::vector<int> cell_clue(total, -1);
     for (int i = 0; i < static_cast<int>(clues.size()); i++)
         cell_clue[clues[i].r * cols + clues[i].c] = i;
     
-    // Generar candidatos para cada pista
+    // Fase 1: Generacion de Candidatos
     std::vector<std::vector<Rect>> candidates(clues.size());
     for (int i = 0; i < static_cast<int>(clues.size()); i++) {
         auto& clue = clues[i];
         int V = clue.value;
-        // Probar todas las combinaciones de (h, w) tal que h*w = V
         for (int h = 1; h <= V; h++) {
             if (V % h != 0) continue;
             int w = V / h;
-            
-            // Probar todas las posiciones posibles del rectángulo (h, w) que contienen la pista
+            // Probar todas las posiciones (r0, c0) del rectangulo (h x w) que contienen la pista
             for (int r0 = std::max(0, clue.r - h + 1); r0 <= std::min(clue.r, filas - h); r0++) {
                 for (int c0 = std::max(0, clue.c - w + 1); c0 <= std::min(clue.c, cols - w); c0++) {
                     bool ok = true;
-                    // Verificar que no contenga otras pistas
+                    // El rectangulo no debe contener otras pistas
                     for (int rr = r0; rr < r0 + h && ok; rr++) {
                         for (int cc = c0; cc < c0 + w && ok; cc++) {
                             int idx = rr * cols + cc;
@@ -126,65 +153,31 @@ inline bool resolver(Tablero const& tablero, Resultado& out) {
         }
     }
     
-    std::vector<bool> covered(total, false);
-    std::vector<int> cell_region(total, -1);
-    std::vector<bool> clue_assigned(clues.size(), false);
-    
-    std::function<bool(int)> backtrack;
-    backtrack = [&](int clue_idx) -> bool {
-        if (clue_idx == static_cast<int>(clues.size())) {
-            // Verificar si todo está cubierto
-            for (int i = 0; i < total; i++) if (!covered[i]) return false;
-            return true;
-        }
-        
-        for (auto const& rect : candidates[clue_idx]) {
-            bool ok = true;
-            for (int rr = rect.r0; rr <= rect.r1 && ok; rr++)
-                for (int cc = rect.c0; cc <= rect.c1 && ok; cc++)
-                    if (covered[rr * cols + cc]) ok = false;
-            
-            if (!ok) continue;
-            
-            // Marcar
-            for (int rr = rect.r0; rr <= rect.r1; rr++)
-                for (int cc = rect.c0; cc <= rect.c1; cc++) {
-                    covered[rr * cols + cc] = true;
-                    cell_region[rr * cols + cc] = clue_idx;
-                }
-            
-            if (backtrack(clue_idx + 1)) return true;
-            
-            // Desmarcar
-            for (int rr = rect.r0; rr <= rect.r1; rr++)
-                for (int cc = rect.c0; cc <= rect.c1; cc++) {
-                    covered[rr * cols + cc] = false;
-                    cell_region[rr * cols + cc] = -1;
-                }
-        }
-        return false;
-    };
-    
-    // Optimizacion: Ordenar pistas por número de candidatos (heurística de valor más restringido)
+    // Fase 2: Aplicar heuristica (Ordenar pistas por dificultad)
     std::vector<int> order(clues.size());
     for(int i=0; i<clues.size(); ++i) order[i] = i;
     std::sort(order.begin(), order.end(), [&](int a, int b){
         return candidates[a].size() < candidates[b].size();
     });
     
-    // Re-organizar candidatos según el orden
     std::vector<std::vector<Rect>> sorted_candidates(clues.size());
     for(int i=0; i<clues.size(); ++i) sorted_candidates[i] = candidates[order[i]];
     
-    // Nuevo backtrack usando el orden
-    std::function<bool(int)> backtrack_ordered;
-    backtrack_ordered = [&](int idx) -> bool {
+    // Estructuras para el estado del backtracking
+    std::vector<bool> covered(total, false);
+    std::vector<int> cell_region(total, -1);
+    
+    // Fase 3: Backtracking recursivo
+    std::function<bool(int)> backtrack;
+    backtrack = [&](int idx) -> bool {
+        // Caso base: todas las pistas han sido asignadas
         if (idx == static_cast<int>(clues.size())) {
             for (int i = 0; i < total; i++) if (!covered[i]) return false;
             return true;
         }
         
         for (auto const& rect : sorted_candidates[idx]) {
+            // Verificar si el espacio para este candidato esta libre
             bool ok = true;
             for (int rr = rect.r0; rr <= rect.r1 && ok; rr++)
                 for (int cc = rect.c0; cc <= rect.c1 && ok; cc++)
@@ -192,14 +185,16 @@ inline bool resolver(Tablero const& tablero, Resultado& out) {
             
             if (!ok) continue;
             
+            // Paso recursivo: Marcar y avanzar
             for (int rr = rect.r0; rr <= rect.r1; rr++)
                 for (int cc = rect.c0; cc <= rect.c1; cc++) {
                     covered[rr * cols + cc] = true;
                     cell_region[rr * cols + cc] = order[idx];
                 }
             
-            if (backtrack_ordered(idx + 1)) return true;
+            if (backtrack(idx + 1)) return true;
             
+            // Backtrack: Desmarcar y probar el siguiente candidato
             for (int rr = rect.r0; rr <= rect.r1; rr++)
                 for (int cc = rect.c0; cc <= rect.c1; cc++) {
                     covered[rr * cols + cc] = false;
@@ -209,11 +204,12 @@ inline bool resolver(Tablero const& tablero, Resultado& out) {
         return false;
     };
 
-    if (!backtrack_ordered(0)) return false;
+    if (!backtrack(0)) return false;
     
     auto t1 = std::chrono::steady_clock::now();
-    out.tiempo = std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0);
+    out.tiempo = std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0);
     
+    // Preparar salida
     out.asignacion.clear();
     for (int i = 0; i < total; i++)
         out.asignacion[i] = cell_region[i];

@@ -1,1 +1,26 @@
-/* You can add global styles to this file, and also import other style files */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap');
+
+body {
+  margin: 0;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  background-color: #f1f5f9;
+  color: #0f172a;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Evitar selección de texto en el tablero y botones */
+.board-table, .round-btn, .clue-circle, .app-logo {
+  user-select: none;
+  -webkit-user-drag: none;
+}
+
+/* Forzar Inter en la tipografía general de Material (sin afectar los iconos) */
+.mat-typography, .mat-mdc-button, .mat-mdc-raised-button, .mat-mdc-unelevated-button, .mat-mdc-outlined-button, .mat-mdc-card-title, .mat-mdc-card-subtitle, .mat-mdc-form-field {
+  font-family: 'Inter', sans-serif !important;
+}
+
+/* Asegurar que los iconos mantengan su fuente correcta */
+.material-icons, mat-icon {
+  font-family: 'Material Icons' !important;
+}

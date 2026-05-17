@@ -130,7 +130,7 @@ int main(int argc, char* argv[]) {
     }
 
     mostrar_tablero_original(tablero);
-    std::cout << "⏳ Resolviendo con memoización...\n";
+    std::cout << "Resolviendo con memoización...\n";
 
     Resultado res;
     if (!resolver(tablero, res)) {

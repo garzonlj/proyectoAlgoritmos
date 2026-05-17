@@ -1,5 +1,3 @@
-import { Injectable } from '@angular/core';
-
 export interface RegionInfo {
   id: number;
   value: number;
@@ -15,9 +13,11 @@ export interface SolveResult {
   cols: number;
   cells: number[];
   regions: RegionInfo[];
-  time_ms: number;
+  time_us: number; // Cambiado a microsegundos
   error?: string;
 }
+
+import { Injectable } from '@angular/core';
 
 @Injectable({ providedIn: 'root' })
 export class ShikakuService {
@@ -31,6 +31,12 @@ export class ShikakuService {
       const err = await res.json().catch(() => ({ error: res.statusText }));
       throw new Error(err.error || 'Error del servidor');
     }
+    return res.json();
+  }
+
+  async generate(size: number = 5): Promise<{ board_str: string }> {
+    const res = await fetch(`/api/generate?size=${size}`);
+    if (!res.ok) throw new Error('Error al generar el tablero');
     return res.json();
   }
 }

@@ -1,79 +1,80 @@
-<mat-toolbar color="primary" class="main-toolbar">
-  <mat-icon class="logo-icon">grid_view</mat-icon>
-  <span class="title">Shikaku Solver</span>
-  <span class="spacer"></span>
-  <button mat-icon-button (click)="mode.set('input')" matTooltip="Reiniciar">
-    <mat-icon>refresh</mat-icon>
-  </button>
+<mat-toolbar class="main-toolbar">
+  <div class="toolbar-content">
+    <img src="Shikakulogo_nobg.png" alt="Shikaku Logo" class="app-logo">
+    <span class="spacer"></span>
+    <button mat-button color="primary" (click)="mode.set('input')" class="text-btn">REINICIAR</button>
+  </div>
 </mat-toolbar>
 
 <div class="main-container">
 
   <!-- MODO ENTRADA -->
   @if (mode() === 'input') {
-    <div class="input-layout">
-      <mat-card class="glass-card input-card">
+    <div class="mobile-layout">
+      <mat-card class="glass-card full-width-card">
         <mat-card-header>
-          <mat-card-title>Configuración del Tablero</mat-card-title>
-          <mat-card-subtitle>Define las dimensiones y pistas</mat-card-subtitle>
+          <mat-card-title>Configuración</mat-card-title>
         </mat-card-header>
-        
-        <mat-card-content>
-          <p class="description">
-            Ingresa los números separados por espacios. Cada línea representa una fila del tablero. 
-            Usa 0 para celdas vacías.
-          </p>
-          
+        <mat-card-content class="pt-16">
+          <mat-form-field appearance="outline" class="full-width mb-16">
+            <mat-label>Tu Nombre</mat-label>
+            <input matInput [value]="playerName()" (input)="onNameInput($event)">
+          </mat-form-field>
+
           <mat-form-field appearance="outline" class="full-width custom-textarea">
             <mat-label>Tablero (Matriz)</mat-label>
-            <textarea matInput rows="8" [value]="boardInput()" (input)="onInput($event)" placeholder="Ej: 4 0 3 ..."></textarea>
+            <textarea matInput rows="6" [value]="boardInput()" (input)="onInput($event)"></textarea>
           </mat-form-field>
 
           <div class="actions">
             <input type="file" #fileInput hidden (change)="onFileUpload($event)" accept=".txt">
-            <button mat-stroked-button color="accent" (click)="fileInput.click()" class="round-btn">
-              <mat-icon>upload_file</mat-icon> CARGAR TXT
+            <button mat-stroked-button class="round-btn flex-1 secondary-btn" (click)="fileInput.click()">
+              CARGAR
             </button>
-            
-            <button mat-raised-button color="primary" (click)="empezarJuego()" class="round-btn glow">
-              <mat-icon>play_arrow</mat-icon> JUGAR
+            <button mat-stroked-button class="round-btn flex-1 secondary-btn" (click)="generarTableroAleatorio()">
+              GENERAR
             </button>
-            
-            <button mat-raised-button color="warn" (click)="solveAI()" [disabled]="loading()" class="round-btn">
-              @if (loading()) {
-                <mat-spinner diameter="20"></mat-spinner>
-              } @else {
-                <div class="btn-content">
-                  <mat-icon>auto_fix_high</mat-icon>
-                  <span>SOLUCIONAR</span>
-                </div>
-              }
+            <button mat-raised-button class="round-btn glow flex-1 primary-btn" (click)="empezarJuego()">
+              JUGAR
             </button>
           </div>
+          
+          @if (loading()) {
+            <button mat-raised-button class="round-btn full-width mt-12 accent-btn" disabled>
+              <mat-spinner diameter="20"></mat-spinner>
+            </button>
+          } @else {
+            <button mat-raised-button class="round-btn full-width mt-12 accent-btn" (click)="solveAI()">
+              SOLUCIONAR
+            </button>
+          }
         </mat-card-content>
       </mat-card>
 
-      <mat-card class="glass-card info-card">
+      <mat-card class="glass-card full-width-card mt-24">
         <mat-card-header>
-          <mat-card-title>Cómo Jugar</mat-card-title>
+          <div class="header-with-action">
+            <mat-card-title>Leaderboard</mat-card-title>
+            <button mat-button color="warn" (click)="clearLeaderboard()" class="text-btn-warn">LIMPIAR</button>
+          </div>
         </mat-card-header>
         <mat-card-content>
-          <div class="rule-item">
-            <mat-icon color="primary">check_circle</mat-icon>
-            <span>Divide la cuadrícula en rectángulos.</span>
-          </div>
-          <div class="rule-item">
-            <mat-icon color="primary">check_circle</mat-icon>
-            <span>Cada rectángulo debe contener <strong>una pista</strong>.</span>
-          </div>
-          <div class="rule-item">
-            <mat-icon color="primary">check_circle</mat-icon>
-            <span>El área debe ser igual al valor de la pista.</span>
-          </div>
-          <div class="rule-item">
-            <mat-icon color="primary">check_circle</mat-icon>
-            <span>No pueden solaparse y deben cubrir todo.</span>
-          </div>
+          @if (leaderboard().length === 0) {
+            <div class="empty-state">Sin récords.</div>
+          } @else {
+            <div class="leader-list">
+              @for (entry of leaderboard(); track $index) {
+                <div class="leader-item">
+                  <span class="rank">{{ $index + 1 }}</span>
+                  <div class="name-box">
+                    <span class="name">{{ entry.name }}</span>
+                    <span class="size">{{ entry.size }}</span>
+                  </div>
+                  <span class="time">{{ formatTime(entry.time) }}</span>
+                </div>
+              }
+            </div>
+          }
         </mat-card-content>
       </mat-card>
     </div>
@@ -83,48 +84,40 @@
   @if (mode() === 'jugando') {
     @let grid = celdas();
     <div class="game-layout">
-      <mat-card class="glass-card game-card">
-        <mat-card-header>
-          <mat-card-title>Resolución Manual</mat-card-title>
-          <mat-card-subtitle>{{ mensajeJuego() }}</mat-card-subtitle>
-        </mat-card-header>
-        
-        <mat-card-content>
-          <div class="board-container">
-            <table class="board-table" (mouseleave)="onMouseUp()">
-              @for (row of grid; track $index; let r = $index) {
-                <tr>
-                  @for (cel of row; track $index; let c = $index) {
-                    <td
-                      [class]="cellBorders(grid, r, c, cel.regionId)"
-                      [style]="cellStyle(cel)"
-                      (mousedown)="onMouseDown(r, c)"
-                      (mouseenter)="onMouseEnter(r, c)"
-                      class="game-cell"
-                    >
-                      <span class="cell-number" [class.invisible]="cel.valor === 0">{{ cel.valor }}</span>
-                    </td>
-                  }
-                </tr>
-              }
-            </table>
-          </div>
-        </mat-card-content>
+      <div class="game-header-mobile">
+        <div class="timer-pill">
+          <span>{{ formatTime(timerValue()) }}</span>
+        </div>
+        <button mat-button color="warn" class="text-btn-warn" (click)="mode.set('input')">CERRAR</button>
+      </div>
 
-        <mat-card-footer class="game-footer">
-          <div class="stats">
-            <div class="stat-badge">
-              <mat-icon>query_stats</mat-icon>
-              <span>{{ assignedCount(grid) }} / {{ grid.length * grid[0].length }} celdas</span>
-            </div>
-            <div class="stat-badge">
-              <mat-icon>category</mat-icon>
-              <span>{{ totalRegions(grid) }} regiones</span>
-            </div>
-          </div>
-          <button mat-button color="warn" (click)="mode.set('input')">ABANDONAR</button>
-        </mat-card-footer>
-      </mat-card>
+      <div class="board-container">
+        <table class="board-table" (mouseleave)="onMouseUp()">
+          @for (row of grid; track $index; let r = $index) {
+            <tr>
+              @for (cel of row; track $index; let c = $index) {
+                <td
+                  [class]="cellBorders(grid, r, c, cel.regionId)"
+                  [style]="cellStyle(cel)"
+                  (mousedown)="onMouseDown(r, c)"
+                  (mouseenter)="onMouseEnter(r, c)"
+                  class="game-cell"
+                >
+                  @if (cel.valor > 0) {
+                    <div class="clue-circle">{{ cel.valor }}</div>
+                  }
+                </td>
+              }
+            </tr>
+          }
+        </table>
+      </div>
+
+      <div class="mobile-controls">
+        <button mat-raised-button class="round-btn full-width secondary-btn" (click)="showSolution()">
+          VER SOLUCIÓN
+        </button>
+      </div>
     </div>
   }
 
@@ -132,52 +125,54 @@
   @if (mode() === 'solucionado') {
     @let res = result()!;
     @let orig = originalBoard();
-    <div class="result-layout">
-      <mat-card class="glass-card result-card">
-        <mat-card-header>
-          <mat-card-title>Solución Sintética</mat-card-title>
-          <mat-card-subtitle>Encontrada en {{ res.time_ms }} ms</mat-card-subtitle>
-        </mat-card-header>
-        
-        <mat-card-content>
-          <div class="board-container">
-            <table class="board-table">
-              @for (r of [].constructor(res.rows); track $index; let row = $index) {
-                <tr>
-                  @for (c of [].constructor(res.cols); track $index; let col = $index) {
-                    @let id = res.cells[row * res.cols + col];
-                    @let clue = orig[row][col];
-                    <td
-                      [class]="cellBorders(null, row, col, id, res.rows, res.cols, res.cells)"
-                      [style.background-color]="colorFor(id)"
-                      class="game-cell"
-                    >
-                      <span class="cell-number" [class.invisible]="clue === 0">{{ clue }}</span>
-                    </td>
+    <div class="game-layout">
+      <div class="game-header-mobile">
+        <div class="timer-pill">
+          <span>{{ formatPreciseTime(res.time_us) }}</span>
+        </div>
+        <button mat-button color="warn" class="text-btn-warn" (click)="mode.set('input')">CERRAR</button>
+      </div>
+
+      <div class="board-container">
+        <table class="board-table">
+          @for (r of [].constructor(res.rows); track $index; let row = $index) {
+            <tr>
+              @for (c of [].constructor(res.cols); track $index; let col = $index) {
+                @let id = res.cells[row * res.cols + col];
+                @let clue = orig[row][col];
+                <td
+                  [class]="cellBorders(null, row, col, id, res.rows, res.cols, res.cells)"
+                  [style.background-color]="colorFor(id)"
+                  class="game-cell"
+                >
+                  @if (clue > 0) {
+                    <div class="clue-circle">{{ clue }}</div>
                   }
-                </tr>
+                </td>
               }
-            </table>
-          </div>
-
-          <div class="regions-list">
-            <h3>Detalle de Regiones</h3>
-            <div class="regions-grid">
-              @for (reg of res.regions; track reg.id) {
-                <div class="region-chip">
-                  <span class="color-indicator" [style.background-color]="colorFor(reg.id)"></span>
-                  <span class="region-text">Región {{ reg.id }}: {{ reg.value }}</span>
-                </div>
-              }
-            </div>
-          </div>
-        </mat-card-content>
-
-        <mat-card-actions class="result-actions">
-          <button mat-raised-button color="primary" (click)="mode.set('input')" class="round-btn">NUEVO PUZZLE</button>
-        </mat-card-actions>
-      </mat-card>
+            </tr>
+          }
+        </table>
+      </div>
+      <button mat-raised-button class="round-btn full-width mt-12 primary-btn" (click)="mode.set('input')">
+        NUEVO PUZZLE
+      </button>
     </div>
   }
 
 </div>
+
+<!-- DIALOGO COMPLETADO -->
+@if (showCompletionDialog()) {
+  <div class="completion-overlay">
+    <mat-card class="completion-card">
+      <div class="kanji">完成</div>
+      <div class="subtitle">puzzle complete</div>
+      <div class="time-display-large">{{ formatTime(completionTime()) }}</div>
+      
+      <div class="dialog-actions">
+        <button mat-raised-button class="round-btn flex-1 primary-btn" (click)="showCompletionDialog.set(false)">ACEPTAR</button>
+      </div>
+    </mat-card>
+  </div>
+}
