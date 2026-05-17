@@ -1,73 +1,75 @@
 # Contexto del Proyecto: Shikaku Solver
 
 ## Objetivo
-Solver en C++ para el juego Shikaku ("Divide Rectangles"), con interfaz web Angular + servidor Crow.
+Solver en C++ para el juego Shikaku ("Divide Rectangles"), con interfaz web en Angular + servidor HTTP ligero en C++ (Crow).
 
 ## Reglas del Shikaku (ESTANDAR)
-- Cuadricula con NUMEROS (pistas) en ALGUNAS celdas, 0 en las demas.
-- Cada pista indica el AREA del rectangulo que debe contenerla.
-- Los rectangulos no se solapan y cubren toda la cuadricula.
-- Cada rectangulo contiene EXACTAMENTE UNA pista.
-- El area del rectangulo debe ser igual al valor de la pista.
+- Cuadrícula con NÚMEROS (pistas) en ALGUNAS celdas, 0 en las demás.
+- Cada pista indica el ÁREA del rectángulo que debe contenerla.
+- Los rectángulos no se solapan y cubren toda la cuadrícula.
+- Cada rectángulo contiene EXACTAMENTE UNA pista.
+- El área del rectángulo debe ser igual al valor de la pista.
 
 ## Archivos existentes
-| Archivo | Descripcion |
+| Archivo | Descripción |
 |---|---|
-| `chikaku_solver.py` | Solver original en Python (referencia) |
-| `shikaku_solver.c++` | Solver en C++11 (CLI) |
-| `solver.hpp` | Header con logica del solver estandar (compartido) |
+| `shikaku_solver.c++` | Solver en C++11 (CLI) para línea de comandos |
+| `solver.hpp` | Header con lógica del solver estándar (Backtracking + MRV Heuristic) |
+| `generator.hpp` | Header con lógica para la generación procedural de tableros válidos |
 | `shikaku_server.c++` | Servidor HTTP con Crow (C++17, puerto 18080) |
-| `include/crow.h` + `include/crow/` | Headers del framework Crow |
-| `frontend/` | Aplicacion Angular 21 para visualizacion web |
-| `frontend/dist/browser/` | Build de produccion del Angular |
-| `frontend/src/app/` | Codigo fuente Angular |
-| `ejemplos/` | 10 puzzles de ejemplo con pistas (0 = vacio) |
-| `puzzle.txt` | Tablero original de referencia |
-| `context/enunciado_2026_10.pdf` | Enunciado del proyecto |
-| `.vscode/c_cpp_properties.json` | Config de IntelliSense para VS Code |
+| `include/crow.h` + `include/crow/` | Headers del framework web Crow |
+| `frontend/` | Aplicación Angular 21 para visualización web y juego interactivo |
+| `frontend/dist/shikaku-frontend/browser/` | Build de producción de la SPA de Angular |
+| `frontend/src/app/` | Código fuente Angular (Componentes, Servicios, Material UI) |
+| `ejemplos/` | Puzzles de ejemplo con pistas (0 = vacío) |
+| `comandos/COMANDOS.txt` | Instrucciones de compilación para múltiples plataformas |
 
-## Algoritmo (Shikaku estandar)
-1. **Lectura**: Archivo o JSON con numeros (0 = celda vacia, >0 = pista).
-2. **Validacion**: Dimensiones uniformes, valores >= 0, al menos una pista.
-3. **Pistas**: Se identifican las celdas con valor > 0 como pistas.
-4. **Candidatos**: Para cada pista, se generan todos los rectangulos que:
-   - Contienen la pista
-   - Tienen area = valor de la pista
-   - No cubren otras pistas
-   - Caben en la cuadricula
+## Algoritmo (Shikaku estándar)
+1. **Lectura**: Archivo, JSON o String de matriz con números (0 = celda vacía, >0 = pista).
+2. **Validación (Frontend y Backend)**: Dimensiones uniformes, valores >= 0, pistas válidas, y validación matemática (suma de pistas = área total).
+3. **Candidatos**: Para cada pista, se generan todos los rectángulos posibles que contengan la pista y tengan el área requerida.
+4. **Heurística MRV (Minimum Remaining Values)**: Se ordenan las pistas de menor a mayor cantidad de rectángulos candidatos para optimizar el árbol de búsqueda.
 5. **Backtracking**:
-   - Se toma la primera celda sin cubrir
-   - Se prueban todos los rectangulos candidatos que la cubren
-   - Se marca el rectangulo y la pista como asignados
-   - Se recursa hasta cubrir toda la cuadricula
-6. **Visualizacion**: Colores CSS con bordes gruesos entre regiones.
+   - Se prueban los rectángulos candidatos para la pista actual.
+   - Se marca la región cubierta en la cuadrícula.
+   - Se llama recursivamente para la siguiente pista.
+6. **Visualización**: Renderizado en UI Angular con colores distintivos por región, cronómetro de alta precisión, y animaciones.
 
-## Optimizaciones
+## Optimizaciones y Mejoras Recientes
 - `uint8_t` para valores del tablero.
-- `int8_t` para IDs de region.
-- `int` nativo para indices (32 bits en LP64).
-- Lookup table `cell_clue` para verificacion O(1) de pistas.
-- Pre-reserva de capacidad en contenedores.
-- Backtracking con estado mutable (sin copias).
+- `int` nativo para IDs de región (para evitar desbordamiento en tableros grandes).
+- `std::chrono::microseconds` para medición de tiempos de alta precisión del solucionador IA.
+- Interfaz renovada estilo Mobile-First (Tipografía Inter, diseño sin íconos conflictivos).
+- Sistema de **Leaderboard Local** almacenado en caché.
+- Mecánica Click-and-Drag para selección de rectángulos en modo manual.
 
 ## Arquitectura Web
 ```
                      +----------------------+
                      |  Angular App (SPA)   |
-                     |  frontend/dist/browser|
+                     |  (dist/shikaku-...)  |
                      +----------+-----------+
-                                | HTTP (fetch)
+                                | HTTP / JSON
                      +----------v-----------+
                      |  Crow Server (:18080)|
                      |                      |
-                     |  GET  /          -> index.html
-                     |  GET  /<path>    -> archivo estatico
-                     |  POST /api/solve -> JSON solucion
+                     |  GET  /             -> index.html
+                     |  GET  /api/generate -> Tablero Aleatorio
+                     |  POST /api/solve    -> JSON solución
                      +--------------------+
 ```
 
 ## API REST
-**POST /api/solve**
+
+**1. Generar Tablero:** `GET /api/generate?size=N`
+```json
+// Response 200
+{
+  "board_str": "4 0 0 0\n0 0 3 0\n0 4 0 0\n0 0 0 5"
+}
+```
+
+**2. Resolver Tablero:** `POST /api/solve`
 ```json
 // Request
 { "board": [[4,0,3,0,0],[0,0,6,0,0],[2,0,0,0,0],[4,0,6,0,0],[0,0,0,0,0]] }
@@ -79,31 +81,14 @@ Solver en C++ para el juego Shikaku ("Divide Rectangles"), con interfaz web Angu
   "regions": [
     {"id": 0, "value": 4, "cells": 4, "r0":0,"c0":0,"r1":1,"c1":1}, ...
   ],
-  "time_ms": 0
+  "time_us": 1500 // Tiempo en microsegundos
 }
 
-// Response 400
-{ "error": "mensaje" }
+// Response 400/200 (con error)
+{ "error": "mensaje descriptivo" }
 ```
 
-## Compilacion y ejecucion
-```sh
-# CLI solver
-g++ -std=c++11 -O3 -o shikaku_solver shikaku_solver.c++
-./shikaku_solver ejemplos/01_5x5.txt
-
-# Servidor web
-g++ -std=c++17 -O3 -Iinclude -pthread -o shikaku_server shikaku_server.c++
-./shikaku_server
-# -> http://localhost:18080
-
-# Frontend (desarrollo)
-cd frontend && npx ng serve
-```
-
-## Dependencias externas
-- **Crow** (GitHub master, header-only, en `include/`)
-- **ASIO** (`pacman -S asio`)
-- **Node.js** v26 + npm 11 (para Angular)
-- **Angular CLI** (v21.x)
-- **g++** (GCC 16.1.1) con `-std=c++17` para Crow, `-std=c++11` para CLI
+## Dependencias
+- **Crow** (C++ Microframework)
+- **Node.js** + **Angular CLI** (Frontend SPA)
+- **Compilador C++17** compatible con sockets/threads (GCC/MinGW/Clang)
